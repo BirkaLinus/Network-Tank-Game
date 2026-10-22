@@ -54,6 +54,9 @@ namespace NetworkTankArena.Networking
         {
             ClearLocalPlayer();
             spawnSlots.Clear();
+            //ADDDED
+            PlayerScoreMemory.ClearScore(); //When the host or client disconnects, clear the score memory to avoid retaining scores from previous sessions.
+            //ADDED
             if (networkManager == null)
                 return;
 
@@ -98,6 +101,10 @@ namespace NetworkTankArena.Networking
             networkManager.NetworkConfig.ConnectionApproval = true;
             networkManager.ConnectionApprovalCallback = ApproveConnection;
             transport.SetConnectionData("127.0.0.1", port, "127.0.0.1");
+            //ADDED
+            LocalPlayerTracker.Suffix = host ? "_host" : "_client"; // adding host or client suffix depending on the session type.
+            networkManager.NetworkConfig.ConnectionData = Encoding.UTF8.GetBytes(LocalPlayerTracker.Id); //local player ID is sent to the server for connection approval and score tracking.
+            //ADDED
             bool started = host ? networkManager.StartHost() : networkManager.StartClient();
             if (started && host)
             {
@@ -123,6 +130,8 @@ namespace NetworkTankArena.Networking
         {
             // Reserve approval slots too, so simultaneous connection attempts cannot overlap spawns.
             int slot = !spawnSlots.ContainsValue(0) ? 0 : !spawnSlots.ContainsValue(1) ? 1 : -1;
+            string playerId = Encoding.UTF8.GetString(request.Payload);
+            Debug.Log($"Connection from clientId {request.ClientNetworkId} has player id {playerId}");
             response.Approved = false;
             response.CreatePlayerObject = false;
             response.Pending = false;
@@ -144,6 +153,9 @@ namespace NetworkTankArena.Networking
             response.Position = spawn.position;
             response.Rotation = Quaternion.Euler(0f, spawn.eulerAngles.y, 0f);
             spawnSlots.Add(request.ClientNetworkId, slot);
+            //ADDED
+            PlayerScoreMemory.Register(request.ClientNetworkId, playerId); //Register the player ID with the client ID for score tracking.
+            //ADDED
             response.Approved = true;
             response.CreatePlayerObject = true;
             // NGO creates exactly one owned PlayerObject using the registered Player Prefab.

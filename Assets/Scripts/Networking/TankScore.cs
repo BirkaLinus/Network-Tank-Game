@@ -9,6 +9,14 @@ namespace NetworkTankArena
     {
         public NetworkVariable<int> score = new NetworkVariable<int>(0);
 
+        public override void OnNetworkSpawn()
+        {
+            if (IsServer)
+            {
+                score.Value = PlayerScoreMemory.GetScore(OwnerClientId); //Restores the saved score to the client.
+            }
+        }
+
         private void Update()
         {
             //Testing
@@ -22,6 +30,10 @@ namespace NetworkTankArena
 
             score.Value += 1;
 
+            PlayerScoreMemory.SaveScore(OwnerClientId, score.Value); //Saves the score to memory to the clientID. 
+                                                                     //This is done on the server to ensure that
+                                                                     //the score is saved only once and not multiple
+                                                                     //times by different clients.
         }
 
         private void OnGUI()
