@@ -14,6 +14,7 @@ namespace NetworkTankArena
                 if (!PlayerPrefs.HasKey(key))
                 {
                     PlayerPrefs.SetString(key, System.Guid.NewGuid().ToString());
+                    PlayerPrefs.Save(); //Writes to the disk immediately to ensure the GUID is saved.
                 }
                 return PlayerPrefs.GetString(key);
             }

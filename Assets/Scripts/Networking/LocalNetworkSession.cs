@@ -22,6 +22,12 @@ namespace NetworkTankArena.Networking
         [SerializeField] private Transform damageTargetSpawn;
         [SerializeField] private ushort port = 7777;
 
+        [SerializeField] private float reconnectDeadline;
+        [SerializeField] private bool hadConnection;
+
+        [SerializeField] private const string LastSeenKey = "lastSeenConnected";
+        [SerializeField] private float nextSeenSave;
+
         private readonly Dictionary<ulong, int> spawnSlots = new Dictionary<ulong, int>();
         private NetworkTankController localPlayer;
         private Vector3 idleCameraPosition;
@@ -38,6 +44,16 @@ namespace NetworkTankArena.Networking
                 idleCameraRotation = followCamera.transform.rotation;
                 followCamera.SetTarget(null);
             }
+
+            if (PlayerPrefs.HasKey(LastSeenKey) && long.TryParse(PlayerPrefs.GetString(LastSeenKey), out long savedBinary))
+            {
+                double elapsed = (System.DateTime.UtcNow - System.DateTime.FromBinary(savedBinary)).TotalSeconds;
+
+                if (elapsed >= 0 && elapsed < PlayerScoreMemory.GraceSeconds)
+                {
+                    reconnectDeadline = Time.time + PlayerScoreMemory.GraceSeconds - (float)elapsed;
+                }
+            }
         }
 
         private void OnEnable()
@@ -48,6 +64,7 @@ namespace NetworkTankArena.Networking
             networkManager.OnClientDisconnectCallback += OnClientDisconnected;
             networkManager.OnClientStopped += OnClientStopped;
             networkManager.OnServerStopped += OnServerStopped;
+            networkManager.OnClientConnectedCallback += OnClientConnected;
         }
 
         private void OnDisable()
@@ -55,7 +72,8 @@ namespace NetworkTankArena.Networking
             ClearLocalPlayer();
             spawnSlots.Clear();
             //ADDDED
-            PlayerScoreMemory.ClearScore(); //When the host or client disconnects, clear the score memory to avoid retaining scores from previous sessions.
+            PlayerScoreMemory.ClearScore(); //When the host or client disconnects,
+                                            //clear the score memory to avoid retaining scores from previous sessions.
             //ADDED
             if (networkManager == null)
                 return;
@@ -63,10 +81,26 @@ namespace NetworkTankArena.Networking
             networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
             networkManager.OnClientStopped -= OnClientStopped;
             networkManager.OnServerStopped -= OnServerStopped;
+            networkManager.OnClientConnectedCallback -= OnClientConnected;
+
             if (networkManager.ConnectionApprovalCallback == ApproveConnection)
                 networkManager.ConnectionApprovalCallback = null;
             if (networkManager.IsListening)
                 networkManager.Shutdown();
+        }
+
+        private void Update()
+        {
+            //In case of a client crash or disconnect, 
+            //we want to save the last seen time to PlayerPrefs so that the player can rejoin within the grace period.
+            //Makes us see the correct(more or less) timer to rejoin with the same score.
+            if (networkManager == null || !networkManager.IsConnectedClient || networkManager.IsServer) return;
+
+            if (Time.time < nextSeenSave) return;
+
+            nextSeenSave = Time.time + 2f;
+            PlayerPrefs.SetString(LastSeenKey, System.DateTime.UtcNow.ToBinary().ToString());
+            PlayerPrefs.Save(); //Writes to the disk immediately to ensure the last seen time is saved.
         }
 
         public void StartHost() => StartSession(true);
@@ -74,6 +108,11 @@ namespace NetworkTankArena.Networking
 
         private void StartSession(bool host)
         {
+            if (!host)
+            {
+                PlayerPrefs.DeleteKey(LastSeenKey);
+            }
+
             if (networkManager == null || networkManager.IsListening || networkManager.ShutdownInProgress)
                 return;
 
@@ -98,6 +137,8 @@ namespace NetworkTankArena.Networking
 
             ClearLocalPlayer();
             spawnSlots.Clear();
+            PlayerScoreMemory.ClearScore(); //Clear the score memory when starting a new session to avoid retaining scores from previous sessions.
+            reconnectDeadline = 0f; //Reset the reconnect deadline when starting a new session.
             networkManager.NetworkConfig.ConnectionApproval = true;
             networkManager.ConnectionApprovalCallback = ApproveConnection;
             transport.SetConnectionData("127.0.0.1", port, "127.0.0.1");
@@ -192,7 +233,14 @@ namespace NetworkTankArena.Networking
 
         internal void OnClientDisconnected(ulong clientId)
         {
+            //ADDED
+            if (networkManager != null && networkManager.IsServer)
+                PlayerScoreMemory.MarkDisconnected(clientId); //Server marks the client as disconnected for score tracking,
+                                                              //allowing for grace period handling.
+                                                              //Making sure that the only the server updates this.
+
             spawnSlots.Remove(clientId);
+
             if (networkManager != null && clientId == networkManager.LocalClientId)
             {
                 ClearLocalPlayer();
@@ -202,7 +250,13 @@ namespace NetworkTankArena.Networking
         }
 
         private void OnClientStopped(bool wasHost)
-        {
+        { 
+            if (!wasHost && hadConnection)
+            {
+                reconnectDeadline = Time.time + PlayerScoreMemory.GraceSeconds;
+                hadConnection = false;
+            }
+
             ClearLocalPlayer();
             spawnSlots.Clear();
         }
@@ -211,11 +265,18 @@ namespace NetworkTankArena.Networking
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(12f, 12f, 300f, 150f), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(12f, 12f, 300f, 190f), GUI.skin.box); //Changed the box to be bigger...
             GUILayout.Label("Network Tank Arena — two-player lab");
             GUILayout.Label(networkManager != null && networkManager.IsConnectedClient ?
                 (networkManager.IsHost ? "Host connected" : "Client connected") : status);
             GUI.enabled = networkManager != null && !networkManager.ShutdownInProgress;
+
+            if (reconnectDeadline> 0f)
+            {
+                float left = reconnectDeadline - Time.time;
+                GUILayout.Label(left > 0f ? $"Rejoin within {Mathf.CeilToInt(left)}s to keep your score." : "Join already started game, starting on 0 score.");
+            }
+
             if (networkManager != null && networkManager.IsListening)
             {
                 if (GUILayout.Button("Stop session"))
@@ -230,6 +291,14 @@ namespace NetworkTankArena.Networking
             }
             GUI.enabled = true;
             GUILayout.EndArea();
+        }
+
+        private void OnClientConnected(ulong clientID)
+        {
+            if (networkManager != null && !networkManager.IsServer && clientID == networkManager.LocalClientId)
+            {
+                hadConnection = true;
+            }
         }
     }
 }

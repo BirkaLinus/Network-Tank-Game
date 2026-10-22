@@ -9,7 +9,33 @@ namespace NetworkTankArena
         private static readonly Dictionary<ulong, string> clientToPlayer = new Dictionary<ulong, string>();
         private static readonly Dictionary<string, int> savedScores = new Dictionary<string, int>();
 
-        public static void Register(ulong clientId, string playerID) => clientToPlayer[clientId] = playerID;
+        private static readonly Dictionary<string, float> disconnectTimes = new Dictionary<string, float>();
+
+        public const float GraceSeconds = 30f; // Time in seconds to keep the score after disconnect
+
+        public static void Register(ulong clientId, string playerID)
+        {
+            clientToPlayer[clientId] = playerID;
+
+            if (disconnectTimes.TryGetValue(playerID, out float leftAt))
+            {
+                if (Time.time - leftAt > GraceSeconds)
+                {
+                    savedScores.Remove(playerID);
+                    disconnectTimes.Remove(playerID);
+                }
+            }
+        }
+
+
+        //Called when a client disconnects
+        public static void MarkDisconnected(ulong clientId)
+        {
+            if (clientToPlayer.TryGetValue(clientId, out string playerId))
+            {
+                disconnectTimes[playerId] = Time.time; //using server side so that the client cant cheat by changing the time on their device.
+            }
+        }
 
         public static int GetScore(ulong clientId)
         {
@@ -32,6 +58,7 @@ namespace NetworkTankArena
         {
             clientToPlayer.Clear();
             savedScores.Clear();
+            disconnectTimes.Clear();
         }
     }
 }
