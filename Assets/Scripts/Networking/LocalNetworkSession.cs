@@ -29,6 +29,13 @@ namespace NetworkTankArena.Networking
         [SerializeField] private float nextSeenSave;
 
         private readonly Dictionary<ulong, int> spawnSlots = new Dictionary<ulong, int>();
+        private sealed class Reservation
+        {
+            public int slot;     //which slot the player is assigned to (0 or 1)
+            public float leftAt; //The time the player left
+        }
+        private readonly Dictionary<string, Reservation> reservations = new Dictionary<string, Reservation>();
+
         private NetworkTankController localPlayer;
         private Vector3 idleCameraPosition;
         private Quaternion idleCameraRotation;
@@ -103,6 +110,7 @@ namespace NetworkTankArena.Networking
             PlayerPrefs.Save(); //Writes to the disk immediately to ensure the last seen time is saved.
         }
 
+
         public void StartHost() => StartSession(true);
         public void StartClient() => StartSession(false);
 
@@ -137,14 +145,17 @@ namespace NetworkTankArena.Networking
 
             ClearLocalPlayer();
             spawnSlots.Clear();
+            reservations.Clear();
             PlayerScoreMemory.ClearScore(); //Clear the score memory when starting a new session to avoid retaining scores from previous sessions.
             reconnectDeadline = 0f; //Reset the reconnect deadline when starting a new session.
             networkManager.NetworkConfig.ConnectionApproval = true;
             networkManager.ConnectionApprovalCallback = ApproveConnection;
             transport.SetConnectionData("127.0.0.1", port, "127.0.0.1");
             //ADDED
-            LocalPlayerTracker.Suffix = host ? "_host" : "_client"; // adding host or client suffix depending on the session type.
+            LocalPlayerTracker.Suffix = host ? "_host" :
+                (UnityEngine.InputSystem.Keyboard.current.shiftKey.isPressed ? "_stranger" : "_client"); //Added shiftkey to simulate a third player trying to join. Used only for testing.
             networkManager.NetworkConfig.ConnectionData = Encoding.UTF8.GetBytes(LocalPlayerTracker.Id); //local player ID is sent to the server for connection approval and score tracking.
+
             //ADDED
             bool started = host ? networkManager.StartHost() : networkManager.StartClient();
             if (started && host)
@@ -170,14 +181,24 @@ namespace NetworkTankArena.Networking
             NetworkManager.ConnectionApprovalResponse response)
         {
             // Reserve approval slots too, so simultaneous connection attempts cannot overlap spawns.
-            int slot = !spawnSlots.ContainsValue(0) ? 0 : !spawnSlots.ContainsValue(1) ? 1 : -1;
+            //int slot = !spawnSlots.ContainsValue(0) ? 0 : !spawnSlots.ContainsValue(1) ? 1 : -1;
+            //string playerId = Encoding.UTF8.GetString(request.Payload);
+
             string playerId = Encoding.UTF8.GetString(request.Payload);
+            Debug.Log($"Connection from clientId {request.ClientNetworkId} has player id {playerId}");
+
+            int slot = -1;
+            if (IsSeatFreeFor(0, playerId))
+                slot = 0;
+            else if (IsSeatFreeFor(1, playerId))
+                slot = 1;
             Debug.Log($"Connection from clientId {request.ClientNetworkId} has player id {playerId}");
             response.Approved = false;
             response.CreatePlayerObject = false;
             response.Pending = false;
             if (slot < 0 || spawnSlots.ContainsKey(request.ClientNetworkId))
             {
+                Debug.Log($"[Server] REJECTED player {playerId}: no free seat"); //Testing stuff...
                 response.Reason = "This lab session has room for two players.";
                 return;
             }
@@ -194,9 +215,9 @@ namespace NetworkTankArena.Networking
             response.Position = spawn.position;
             response.Rotation = Quaternion.Euler(0f, spawn.eulerAngles.y, 0f);
             spawnSlots.Add(request.ClientNetworkId, slot);
-            //ADDED
+            reservations.Remove(playerId);   // this player is back, the reserved sign comes down
             PlayerScoreMemory.Register(request.ClientNetworkId, playerId); //Register the player ID with the client ID for score tracking.
-            //ADDED
+            Debug.Log($"[Server] APPROVED player {playerId} in seat {slot}");
             response.Approved = true;
             response.CreatePlayerObject = true;
             // NGO creates exactly one owned PlayerObject using the registered Player Prefab.
@@ -234,10 +255,24 @@ namespace NetworkTankArena.Networking
         internal void OnClientDisconnected(ulong clientId)
         {
             //ADDED
+            //if (networkManager != null && networkManager.IsServer)
+            //    PlayerScoreMemory.MarkDisconnected(clientId); //Server marks the client as disconnected for score tracking,
+            //allowing for grace period handling.
+            //Making sure that the only the server updates this.
+
             if (networkManager != null && networkManager.IsServer)
-                PlayerScoreMemory.MarkDisconnected(clientId); //Server marks the client as disconnected for score tracking,
-                                                              //allowing for grace period handling.
-                                                              //Making sure that the only the server updates this.
+            {
+                string leftId = PlayerScoreMemory.GetPlayerId(clientId);
+
+                if (leftId != null && clientId != networkManager.LocalClientId &&
+                    spawnSlots.TryGetValue(clientId, out int leftSlot))
+                {
+                    reservations[leftId] = new Reservation { slot = leftSlot, leftAt = Time.time };
+                    Debug.Log($"[Server] reserved slot {leftSlot} for player {leftId}");
+                }
+
+                PlayerScoreMemory.MarkDisconnected(clientId);
+            }
 
             spawnSlots.Remove(clientId);
 
@@ -247,6 +282,25 @@ namespace NetworkTankArena.Networking
                 status = string.IsNullOrEmpty(networkManager.DisconnectReason) ?
                     "Disconnected." : networkManager.DisconnectReason;
             }
+        }
+        private bool IsReservationActive(Reservation r)
+        {
+            return Time.time - r.leftAt <= PlayerScoreMemory.GraceSeconds;
+        }
+
+        // Can this player sit at this table?
+        private bool IsSeatFreeFor(int slot, string playerId)
+        {
+            if (spawnSlots.ContainsValue(slot))
+                return false;                       // someone is already sitting there
+
+            foreach (var pair in reservations)
+            {
+                bool reservedForSomeoneElse = pair.Key != playerId;
+                if (reservedForSomeoneElse && pair.Value.slot == slot && IsReservationActive(pair.Value))
+                    return false;                   // reserved sign for another player
+            }
+            return true;
         }
 
         private void OnClientStopped(bool wasHost)
@@ -261,7 +315,11 @@ namespace NetworkTankArena.Networking
             spawnSlots.Clear();
         }
 
-        internal void OnServerStopped(bool wasHost) => spawnSlots.Clear();
+        internal void OnServerStopped(bool wasHost)
+        {
+            spawnSlots.Clear();
+            reservations.Clear();
+        }
 
         private void OnGUI()
         {

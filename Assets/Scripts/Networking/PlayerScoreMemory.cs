@@ -12,7 +12,7 @@ namespace NetworkTankArena
         private static readonly Dictionary<string, float> disconnectTimes = new Dictionary<string, float>();
 
         public const float GraceSeconds = 30f; // Time in seconds to keep the score after disconnect
-
+        
         public static void Register(ulong clientId, string playerID)
         {
             clientToPlayer[clientId] = playerID;
@@ -23,6 +23,9 @@ namespace NetworkTankArena
                 {
                     savedScores.Remove(playerID);
                     disconnectTimes.Remove(playerID);
+                    //I probably could just clear the dictionary
+                    //but for this game as it is now I'll just keep
+                    //it as it is for now.
                 }
             }
         }
@@ -36,6 +39,7 @@ namespace NetworkTankArena
                 disconnectTimes[playerId] = Time.time; //using server side so that the client cant cheat by changing the time on their device.
             }
         }
+        public static string GetPlayerId(ulong clientId) => clientToPlayer.TryGetValue(clientId, out string id) ? id : null;
 
         public static int GetScore(ulong clientId)
         {
