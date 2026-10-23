@@ -38,8 +38,9 @@ namespace NetworkTankArena
 
         private void OnGUI()
         {
-            if (!IsOwner) return;
-            GUI.Label(new Rect(12, 200, 300, 30), "Score: " + score.Value);
+            string who = IsOwner ? "You" : "Opponent";
+            float y = IsOwner ? 270f : 295f;   // below the menu box, adjust if it overlaps
+            GUI.Label(new Rect(12f, y, 300f, 30f), $"{who} (client {OwnerClientId}): {score.Value}");
         }
 
         private void PressG() //TestFunction

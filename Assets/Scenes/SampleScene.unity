@@ -174,7 +174,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 241574605}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 98d9db9626104da59357651088226725, type: 3}
   m_Name: 
@@ -809,6 +809,9 @@ MonoBehaviour:
   damageTargetPrefab: {fileID: 3418682627774575154, guid: 54256fa66289803449e00949dc06bd6d, type: 3}
   damageTargetSpawn: {fileID: 1531887442}
   port: 7777
+  reconnectDeadline: 0
+  hadConnection: 0
+  nextSeenSave: 0
 --- !u!114 &773212978
 MonoBehaviour:
   m_ObjectHideFlags: 0
